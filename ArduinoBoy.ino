@@ -1,6 +1,7 @@
 #include <ArduinoSTL.h>
 #include <LedControl.h>
 #include <vector>
+
 #define DINPin 11
 #define CSPin 12
 #define CLKPin 13
@@ -11,22 +12,7 @@ struct Location
   byte y;
 };
 
-struct Tetromino
-{
-  Location block1;
-  Location block2;
-  Location block3;
-  Location block4;
-  Location center;
-} tetromino;
-
-LedControl matrixController(DINPin, CLKPin, CSPin, 2);
-bool matrix[16][8];
-unsigned long timer;
-unsigned long foodTimer;
-bool isTimerRunning;
-bool isGameOver;
-bool foodState;
+// All-purpose variables;
 byte gameOverSprite[16] =
 {
   B11110110,
@@ -47,10 +33,40 @@ byte gameOverSprite[16] =
   B01110101
 };
 
+LedControl matrixController(DINPin, CLKPin, CSPin, 2);
+unsigned long timer;
+bool isGameOver;
+int playerScore;
+
+// Tetris variables
+struct Tetromino
+{
+  Location block1;
+  Location block2;
+  Location block3;
+  Location block4;
+  Location center;
+} tetromino;
+bool tetrisMatrix[16][8];
+
+// Snake variables
 char prevDirection;
-char direction = 'R';
+char direction;
 Location food;
+bool foodState;
 std::vector<Location> snake;
+
+// Pong variables
+struct Paddle
+{
+  Location block1;
+  Location block2;
+  Location block3;
+};
+
+Paddle playerPaddle;
+Paddle aiPaddle;
+int aiScore;
 
 void setup()
 {
@@ -62,11 +78,6 @@ void setup()
   matrixController.clearDisplay(0);
   matrixController.clearDisplay(1);
   randomSeed(analogRead(0));
-  isTimerRunning = true;
-  foodState = true;
-  isGameOver = false;
-  timer = millis();
-  foodTimer = millis();
 }
 
 void loop()
@@ -76,11 +87,15 @@ void loop()
     char game = Serial.read();
     if(game == 'T')
     {
-      tetris();
+      playTetris();
     }
     else if(game == 'S')
     {
       playSnake();
+    }
+    else if(game == 'P')
+    {
+      playPong();
     }
   }
 }
@@ -93,26 +108,34 @@ void test()
   delay(500);
 }
 
+void playPong()
+{
+  
+}
+
 void playSnake()
 {
   setupSnake();
-  newFood();
-  printGame();
+  timer = millis();
   while (!isGameOver)
   {
+    if (Serial.available() >= 0)
+    {
+      char input = Serial.read();
+      if(input == 'L' || input == 'R' || input == 'D' || input == 'U')
+      {
+        char prevDirection = direction;
+        char newDirection =  input;
+        direction = changeDirection(prevDirection, newDirection);
+      }
+    }
     if (millis() - timer >= 750)
     {
       timer = millis();
       moveSnake();
-    }
-    if (Serial.available() >= 0)
-    {
-      char prevDirection = direction;
-      char newDirection =  Serial.read();
-      direction = changeDirection(prevDirection, newDirection);
-    }
+    }    
   }
-  Serial.println("It's game over");
+  gameOver();
 }
 
 char changeDirection(char prevDirection, char newDirection)
@@ -152,22 +175,32 @@ char changeDirection(char prevDirection, char newDirection)
 
 void setupSnake()
 {
-  Serial.println("Setupping snake");
+  isGameOver = false;
+  playerScore = 0;
+  Serial.write('C');
+  Serial.print(playerScore);
+  direction = 'R';
+  foodState = true;
+  while(!snake.empty())
+  {
+    snake.pop_back();
+  }
   Location startingBlock;
   startingBlock.x = 7;
-  startingBlock.y = 2;
+  startingBlock.y = 4;
   snake.push_back(startingBlock);
   startingBlock.x = 7;
   startingBlock.y = 3;
   snake.push_back(startingBlock);
   startingBlock.x = 7;
-  startingBlock.y = 4;
+  startingBlock.y = 2;
   snake.push_back(startingBlock);
+  newFood();
+  printSnakeGameBoard();
 }
 
 void newFood()
 {
-  Serial.println("Setupping food");
   bool needNewLocation = true;
   byte x, y;
   while (needNewLocation)
@@ -186,16 +219,15 @@ void newFood()
     
     if (!needNewLocation)
     {
-      Serial.println("Food successfully set.");
       food.x = x;
       food.y = y;
       
     }
   }
-  printGame();
+  printSnakeGameBoard();
 }
 
-void printGame()
+void printSnakeGameBoard()
 {
   matrixController.clearDisplay(0);
   matrixController.clearDisplay(1);
@@ -225,9 +257,10 @@ void moveSnake()
       moveSnakeUp();
       break;
   }
-  printGame();
+  printSnakeGameBoard();
   checkIfSnakeGameOver();
 }
+
 void turnOffOldSnakeLocation()
 {
   for (std::vector<Location>::iterator i = snake.begin() + 1; i != snake.end(); i++)
@@ -235,6 +268,7 @@ void turnOffOldSnakeLocation()
     matrixController.setLed(i -> x / 8, i -> x % 8, i -> y, false);
   }
 }
+
 void moveSnakeRight()
 {
   Location backLocation = snake.back();
@@ -285,7 +319,7 @@ void moveSnakeUp()
   {
     newFrontLocation.x = 15;
   }
-  else newFrontLocation.x = frontLocation.x;
+  else newFrontLocation.x = frontLocation.x - 1;
   newFrontLocation.y = frontLocation.y;
   snake.insert(snake.begin(), newFrontLocation);
   collectFood(backLocation);
@@ -302,23 +336,27 @@ void collectFood(Location backLocation)
 void checkIfSnakeGameOver()
 {
   Location front = snake.front();
-  for (std::vector<Location>::iterator i = snake.begin() + 1; i != snake.end(); i++)
+  byte count = 0;
+  for (std::vector<Location>::iterator i = snake.begin(); i != snake.end(); i++)
   {
     if (front.x == i -> x && front.y == i -> y)
     {
-      isGameOver = true;
-      return;
+      count++;
     }
   }
-  isGameOver = false;
+  if(count > 1)
+  {
+    isGameOver = true;
+  }
 }
 
-void tetris()
+void playTetris()
 {
-  getNewTetromino();
+  setupTetris();
+  timer = millis();
   while (!isGameOver)
   {
-    if (isTimerRunning && (millis() - timer) >= 1000)
+    if (millis() - timer >= 1000)
     {
       timer = millis();
       shiftDown();
@@ -334,9 +372,13 @@ void tetris()
       {
         shiftRight();
       }
-      else if (command == 'U')
+      else if(command == 'A')
       {
-        rotate();
+        rotate(-1, 1);
+      }
+      else if (command == 'B')
+      {
+        rotate(1, -1);
       }
       else if (command == 'D')
       {
@@ -347,36 +389,47 @@ void tetris()
   gameOver();
 }
 
+void setupTetris()
+{
+  playerScore = 0;
+  isGameOver = false;
+  for(int i = 0; i < 16; i++)
+  {
+    for(int j = 0; j < 8; j++)
+    {
+      tetrisMatrix[i][j] = false;
+    }
+  }
+  getNewTetromino();
+}
+
 void gameOver()
 {
-  while (Serial.available() == 0)
+  for (int i = 0; i < 16; i++)
   {
-    for (int i = 0; i < 16; i++)
-    {
       matrixController.setRow(i / 8, i % 8, gameOverSprite[i]);
-    }
-    delay(500);
-    matrixController.clearDisplay(0);
-    matrixController.clearDisplay(1);
-    delay(500);
   }
+  while (Serial.available() == 0){}
+  Serial.write('V');
+  matrixController.clearDisplay(0);
+  matrixController.clearDisplay(1);
 }
+
 void fastForward()
 {
-  while (matrix[tetromino.block1.x + 1][tetromino.block1.y] != 1 &&
-         matrix[tetromino.block2.x + 1][tetromino.block2.y] != 1 &&
-         matrix[tetromino.block3.x + 1][tetromino.block3.y] != 1 &&
-         matrix[tetromino.block4.x + 1][tetromino.block4.y] != 1 &&
+  while (tetrisMatrix[tetromino.block1.x + 1][tetromino.block1.y] != 1 &&
+         tetrisMatrix[tetromino.block2.x + 1][tetromino.block2.y] != 1 &&
+         tetrisMatrix[tetromino.block3.x + 1][tetromino.block3.y] != 1 &&
+         tetrisMatrix[tetromino.block4.x + 1][tetromino.block4.y] != 1 &&
          tetromino.block1.x != 15 && tetromino.block2.x != 15 &&
          tetromino.block3.x != 15 && tetromino.block4.x != 15)
   {
     shiftDown();
     delay(200);
   }
-  shiftDown();
 }
 
-void rotate()
+void rotate(int rotationXIndex, int rotationYIndex)
 {
   if (tetromino.center.x == 0 && tetromino.center.y == 0)
   {
@@ -389,29 +442,29 @@ void rotate()
   Location newLocation1, newLocation2, newLocation3, newLocation4;
   tempPosition1.x = tetromino.block1.x - tetromino.center.x;
   tempPosition1.y = tetromino.block1.y - tetromino.center.y;
-  relativePosition1.x = tempPosition1.y;
-  relativePosition1.y = -1 * tempPosition1.x;
+  relativePosition1.x = rotationXIndex * tempPosition1.y;
+  relativePosition1.y = rotationYIndex * tempPosition1.x;
   newLocation1.x = tetromino.center.x + relativePosition1.x;
   newLocation1.y = tetromino.center.y + relativePosition1.y;
 
   tempPosition2.x = tetromino.block2.x - tetromino.center.x;
   tempPosition2.y = tetromino.block2.y - tetromino.center.y;
-  relativePosition2.x = tempPosition2.y;
-  relativePosition2.y = -1 * tempPosition2.x;
+  relativePosition2.x = rotationXIndex * tempPosition2.y;
+  relativePosition2.y = rotationYIndex * tempPosition2.x;
   newLocation2.x = tetromino.center.x + relativePosition2.x;
   newLocation2.y = tetromino.center.y + relativePosition2.y;
 
   tempPosition3.x = tetromino.block3.x - tetromino.center.x;
   tempPosition3.y = tetromino.block3.y - tetromino.center.y;
-  relativePosition3.x = tempPosition3.y;
-  relativePosition3.y = -1 * tempPosition3.x;
+  relativePosition3.x = rotationXIndex * tempPosition3.y;
+  relativePosition3.y = rotationYIndex * tempPosition3.x;
   newLocation3.x = tetromino.center.x + relativePosition3.x;
   newLocation3.y = tetromino.center.y + relativePosition3.y;
 
   tempPosition4.x = tetromino.block4.x - tetromino.center.x;
   tempPosition4.y = tetromino.block4.y - tetromino.center.y;
-  relativePosition4.x = tempPosition4.y;
-  relativePosition4.y = -1 * tempPosition4.x;
+  relativePosition4.x = rotationXIndex * tempPosition4.y;
+  relativePosition4.y = rotationYIndex * tempPosition4.x;
   newLocation4.x = tetromino.center.x + relativePosition4.x;
   newLocation4.y = tetromino.center.y + relativePosition4.y;
 
@@ -427,10 +480,10 @@ void rotate()
     turnOnNewLocation();
     return;
   }
-  else if (matrix[newLocation1.x][newLocation1.y] == false &&
-           matrix[newLocation2.x][newLocation2.y] == false &&
-           matrix[newLocation3.x][newLocation3.y] == false &&
-           matrix[newLocation4.x][newLocation4.y] == false)
+  else if (tetrisMatrix[newLocation1.x][newLocation1.y] == false &&
+           tetrisMatrix[newLocation2.x][newLocation2.y] == false &&
+           tetrisMatrix[newLocation3.x][newLocation3.y] == false &&
+           tetrisMatrix[newLocation4.x][newLocation4.y] == false)
   {
     tetromino.block1 = newLocation1;
     tetromino.block2 = newLocation2;
@@ -446,22 +499,22 @@ void shiftDown()
   turnOffOldLocation();
   if (tetromino.block1.x == 15 || tetromino.block2.x == 15 || tetromino.block3.x == 15 || tetromino.block4.x == 15)
   {
-    matrix[tetromino.block1.x][tetromino.block1.y] = 1;
-    matrix[tetromino.block2.x][tetromino.block2.y] = 1;
-    matrix[tetromino.block3.x][tetromino.block3.y] = 1;
-    matrix[tetromino.block4.x][tetromino.block4.y] = 1;
+    tetrisMatrix[tetromino.block1.x][tetromino.block1.y] = 1;
+    tetrisMatrix[tetromino.block2.x][tetromino.block2.y] = 1;
+    tetrisMatrix[tetromino.block3.x][tetromino.block3.y] = 1;
+    tetrisMatrix[tetromino.block4.x][tetromino.block4.y] = 1;
     getNewTetromino();
     return;
   }
-  else if (matrix[tetromino.block1.x + 1][tetromino.block1.y] == 1 ||
-           matrix[tetromino.block2.x + 1][tetromino.block2.y] == 1 ||
-           matrix[tetromino.block3.x + 1][tetromino.block3.y] == 1 ||
-           matrix[tetromino.block4.x + 1][tetromino.block4.y] == 1)
+  else if (tetrisMatrix[tetromino.block1.x + 1][tetromino.block1.y] == 1 ||
+           tetrisMatrix[tetromino.block2.x + 1][tetromino.block2.y] == 1 ||
+           tetrisMatrix[tetromino.block3.x + 1][tetromino.block3.y] == 1 ||
+           tetrisMatrix[tetromino.block4.x + 1][tetromino.block4.y] == 1)
   {
-    matrix[tetromino.block1.x][tetromino.block1.y] = 1;
-    matrix[tetromino.block2.x][tetromino.block2.y] = 1;
-    matrix[tetromino.block3.x][tetromino.block3.y] = 1;
-    matrix[tetromino.block4.x][tetromino.block4.y] = 1;
+    tetrisMatrix[tetromino.block1.x][tetromino.block1.y] = 1;
+    tetrisMatrix[tetromino.block2.x][tetromino.block2.y] = 1;
+    tetrisMatrix[tetromino.block3.x][tetromino.block3.y] = 1;
+    tetrisMatrix[tetromino.block4.x][tetromino.block4.y] = 1;
     getNewTetromino();
     return;
   }
@@ -479,10 +532,10 @@ void shiftLeft()
   {
     return;
   }
-  else if (matrix[tetromino.block1.x][tetromino.block1.y - 1] == 1 ||
-           matrix[tetromino.block2.x][tetromino.block2.y - 1] == 1 ||
-           matrix[tetromino.block3.x][tetromino.block3.y - 1] == 1 ||
-           matrix[tetromino.block4.x][tetromino.block4.y - 1] == 1)
+  else if (tetrisMatrix[tetromino.block1.x][tetromino.block1.y - 1] == 1 ||
+           tetrisMatrix[tetromino.block2.x][tetromino.block2.y - 1] == 1 ||
+           tetrisMatrix[tetromino.block3.x][tetromino.block3.y - 1] == 1 ||
+           tetrisMatrix[tetromino.block4.x][tetromino.block4.y - 1] == 1)
   {
     return;
   }
@@ -502,10 +555,10 @@ void shiftRight()
   {
     return;
   }
-  else if (matrix[tetromino.block1.x][tetromino.block1.y + 1] == 1 ||
-           matrix[tetromino.block2.x][tetromino.block2.y + 1] == 1 ||
-           matrix[tetromino.block3.x][tetromino.block3.y + 1] == 1 ||
-           matrix[tetromino.block4.x][tetromino.block4.y + 1] == 1)
+  else if (tetrisMatrix[tetromino.block1.x][tetromino.block1.y + 1] == 1 ||
+           tetrisMatrix[tetromino.block2.x][tetromino.block2.y + 1] == 1 ||
+           tetrisMatrix[tetromino.block3.x][tetromino.block3.y + 1] == 1 ||
+           tetrisMatrix[tetromino.block4.x][tetromino.block4.y + 1] == 1)
   {
     return;
   }
@@ -616,10 +669,10 @@ void getNewTetromino()
 
 void checkIfGameOver()
 {
-  if (matrix[tetromino.block1.x][tetromino.block1.y] == true ||
-      matrix[tetromino.block2.x][tetromino.block2.y] == true ||
-      matrix[tetromino.block3.x][tetromino.block3.y] == true ||
-      matrix[tetromino.block4.x][tetromino.block4.y] == true)
+  if (tetrisMatrix[tetromino.block1.x][tetromino.block1.y] == true ||
+      tetrisMatrix[tetromino.block2.x][tetromino.block2.y] == true ||
+      tetrisMatrix[tetromino.block3.x][tetromino.block3.y] == true ||
+      tetrisMatrix[tetromino.block4.x][tetromino.block4.y] == true)
   {
     matrixController.clearDisplay(0);
     matrixController.clearDisplay(1);
@@ -629,13 +682,12 @@ void checkIfGameOver()
 
 void clearFullRows()
 {
-  Serial.println("Checking if rows are full");
   for (int i = 0; i < 16; i++)
   {
     bool isRowFull = true;
     for (int j = 0; j < 8; j++)
     {
-      if (matrix[i][j] == false)
+      if (tetrisMatrix[i][j] == false)
       {
         isRowFull = false;
         break;
@@ -644,24 +696,23 @@ void clearFullRows()
 
     if (isRowFull)
     {
-      Serial.println("There are full rows.");
       for (int j = 0; j < 8 ; j++)
       {
-        matrix[i][j] = false;
+        tetrisMatrix[i][j] = false;
       }
       lightAlreadyPlacedLeds();
       delay(200);
 
-      for (int l = 0; l < 8; l++)
+      for(int k = i; k >0 ; k--)
       {
-        if (i != 0)
+        for (int l = 0; l < 8; l++)
         {
-          matrix[i][l] = matrix[i - 1][l];
-          matrix[i - 1][l] = false;
+            tetrisMatrix[k][l] = tetrisMatrix[k - 1][l];
+            tetrisMatrix[k - 1][l] = false;
+           
         }
-
-        lightAlreadyPlacedLeds();
       }
+      lightAlreadyPlacedLeds();
       i--;
     }
   }
@@ -669,6 +720,7 @@ void clearFullRows()
 
 void turnOffOldLocation()
 {
+  lightAlreadyPlacedLeds();
   Location block = tetromino.block1;
   matrixController.setLed(block.x / 8, block.x % 8, block.y, false);
   block = tetromino.block2;
@@ -677,12 +729,11 @@ void turnOffOldLocation()
   matrixController.setLed(block.x / 8, block.x % 8, block.y, false);
   block = tetromino.block4;
   matrixController.setLed(block.x / 8, block.x % 8, block.y, false);
-  Serial.println("OFF");
-  lightAlreadyPlacedLeds();
 }
 
 void turnOnNewLocation()
 {
+  lightAlreadyPlacedLeds();
   Location block = tetromino.block1;
   matrixController.setLed(block.x / 8, block.x % 8, block.y, true);
   block = tetromino.block2;
@@ -691,8 +742,6 @@ void turnOnNewLocation()
   matrixController.setLed(block.x / 8, block.x % 8, block.y, true);
   block = tetromino.block4;
   matrixController.setLed(block.x / 8, block.x % 8, block.y, true);
-  Serial.println("ON");
-  lightAlreadyPlacedLeds();
 }
 
 void lightAlreadyPlacedLeds()
@@ -701,12 +750,7 @@ void lightAlreadyPlacedLeds()
   {
     for (int j = 0; j < 8; j++)
     {
-      if (matrix[i][j] == 1)
-      {
-        matrixController.setLed(i / 8, i % 8, j, true);
-      }
+      matrixController.setLed(i / 8, i % 8, j, tetrisMatrix[i][j]);
     }
   }
-
-  Serial.println("Already placed tetrominos are lit up");
 }
